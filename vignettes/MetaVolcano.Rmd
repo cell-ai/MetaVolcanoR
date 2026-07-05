@@ -134,7 +134,7 @@ which gives `var = (log2FC / stat)^2`.
 
 If your data is already organized as a named list of data frames, you can 
 add the variance column as follows:
-```{r variance_estimation}
+```{r variance_estimation, eval=FALSE}
 # If your tables are already in a list called diffexp_list:
 diffexp_list <- lapply(diffexp_list, function(df) {
   df %>%
@@ -149,7 +149,7 @@ infinite variance and cause `rem_mv` to fail, so these are set to `NA`
 and will be handled gracefully by the model (flagged as `error = TRUE`).
 
 Then pass `vcol = "var"` and `cvar = FALSE` to `rem_mv`:
-```{r rem_mv_no_ci}
+```{r rem_mv_no_ci , eval=FALSE}
 meta_mv <- rem_mv(
   diffexp = diffexp_list,
   pcriteria = "pvalue",

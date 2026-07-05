@@ -1,0 +1,493 @@
+---
+title: "Endometrisis_analysis"
+author: "Iza"
+date: "2026-03-10"
+output: html_document
+---
+
+
+STEP 1: Install and Load Required Packages
+# We need, besides MetaVolcanoR:
+- GEOquery    : download data directly from GEO
+- limma       : differential expression for microarray/RNA-seq
+- dplyr/tidyr : data wrangling
+- ggplot2     : plotting
+- BiocManager : install Bioconductor packages
+```{r}
+pkgs_bioc <- c("GEOquery", "limma", "DESeq2", "edgeR", "Biobase")
+pkgs_cran <- c("dplyr", "tidyr", "ggplot2", "MetaVolcanoR", "stringr", "readr")
+
+for (pkg in pkgs_bioc) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    message("Installing ", pkg, " ...")
+    BiocManager::install(pkg, ask = FALSE)
+  }
+}
+
+for (pkg in pkgs_cran) {
+  if (!requireNamespace(pkg, quietly = TRUE)) {
+    message("Installing ", pkg, " ...")
+    install.packages(pkg)
+  }
+}
+```
+
+Load all packages
+```{r}
+library(GEOquery)
+library(limma)
+library(DESeq2)
+library(edgeR)
+library(Biobase)
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(MetaVolcanoR)
+library(stringr)
+
+```
+
+Since there is raw GEO data download setting higher timeouts
+```{r}
+# Set global options
+options(timeout = 300)  # longer timeout for GEO downloads
+set.seed(42)
+
+# Output directory
+dir.create("results", showWarnings = FALSE)
+dir.create("results/DE",    showWarnings = FALSE)
+dir.create("results/plots", showWarnings = FALSE)
+```
+
+# ==============================
+# STEP 2: Define Sample Annotations
+# =============================
+# We explicitly define which GSM IDs are cases and which are controls this matches what is available for each study on GEO.
+[EDIT] Add here somethign about endometriosis and why to do this.
+```{r}
+# Step 1 — Sample annotations (updated)
+sample_info <- list(
+
+  GSE25628 = list(
+    cases    = c("GSM629719", "GSM629721", "GSM629723", "GSM629726",
+                 "GSM629728", "GSM629730", "GSM629732", "GSM629740"),
+    controls = c("GSM629722", "GSM629724", "GSM629725", "GSM629727",
+                 "GSM629729", "GSM629735"),
+    type     = "microarray"
+  ),
+
+  GSE145701 = list(
+    cases    = c("GSM4331218", "GSM4331222", "GSM4331226", "GSM4331230",
+                 "GSM4331234", "GSM4331238", "GSM4331242", "GSM4331246"),
+    controls = c("GSM4331202", "GSM4331206", "GSM4331210", "GSM4331214"),
+    type     = "microarray"
+  ),
+
+  GSE120103 = list(
+    cases    = c(paste0("GSM", 3393500:3393508),
+                 paste0("GSM", 3393518:3393526)),
+    controls = c(paste0("GSM", 3393491:3393499),
+                 paste0("GSM", 3393509:3393517)),
+    type     = "microarray"
+  ),
+  GSE25628 = list(
+    cases    = c("GSM629719", "GSM629721", "GSM629723", "GSM629726",
+                 "GSM629728", "GSM629730", "GSM629732", "GSM629740"),
+    controls = c("GSM629722", "GSM629724", "GSM629725", "GSM629727",
+                 "GSM629729", "GSM629735"),
+    type     = "microarray"
+  ),
+  GSE145701 = list(
+    cases    = c("GSM4331218", "GSM4331222", "GSM4331226", "GSM4331230",
+                 "GSM4331234", "GSM4331238", "GSM4331242", "GSM4331246"),
+    controls = c("GSM4331202", "GSM4331206", "GSM4331210", "GSM4331214"),
+    type     = "microarray"
+  ),
+  GSE120103 = list(
+    cases    = c(paste0("GSM", 3393500:3393508), paste0("GSM", 3393518:3393526)),
+    controls = c(paste0("GSM", 3393491:3393499), paste0("GSM", 3393509:3393517)),
+    type     = "microarray"
+  ),
+  # --- new datasets ---
+  GSE23339 = list(
+    cases    = c("GSM572747", "GSM572748", "GSM572749", "GSM572750", "GSM572751",
+                 "GSM572758", "GSM572760", "GSM572763", "GSM572765"),
+    controls = c("GSM572752", "GSM572753", "GSM572754", "GSM572755", "GSM572756",
+                 "GSM572757", "GSM572761", "GSM572762", "GSM572764"),
+    type     = "microarray"
+  ),
+  GSE17504 = list(
+    cases    = paste0("GSM", 436440:436444),
+    controls = paste0("GSM", 436450:436454),
+    type     = "microarray"
+  ),
+  GSE7846 = list(
+    cases    = paste0("GSM", 190395:190399),
+    controls = paste0("GSM", 190400:190404),
+    type     = "microarray"
+  ),
+  GSE6364 = list(
+    cases    = paste0("GSM", 150190:150195),
+    controls = paste0("GSM", 150196:150201),
+    type     = "microarray"
+  ),
+  GSE7305 = list(
+    cases    = paste0("GSM", 175766:175775),
+    controls = paste0("GSM", 175776:175785),
+    type     = "microarray"
+  )
+)
+
+```
+
+Download GEO datasets
+# GEOquery::getGEO() downloads the series matrix file from NCBI GEO.
+```{r}
+
+destdir <- normalizePath("results", mustWork = FALSE)
+
+geo_data <- list()
+for (gse_id in names(sample_info)) {
+  cache_file <- file.path(destdir, paste0(gse_id, "_gse.rds"))
+
+  if (file.exists(cache_file)) {
+    message(gse_id, ": loading from cache...")
+    geo_data[[gse_id]] <- readRDS(cache_file)
+  } else {
+    message(gse_id, ": downloading from GEO...")
+    gse <- tryCatch(
+      getGEO(gse_id, GSEMatrix = TRUE, getGPL = TRUE, destdir = destdir),
+      error = function(e) { message("  ERROR: ", e$message); NULL }
+    )
+    if (!is.null(gse)) {
+      geo_data[[gse_id]] <- gse
+      saveRDS(gse, cache_file)
+      message(gse_id, ": download complete.")
+    }
+  }
+}
+```
+
+
+# STEP 4: Differential Expression per Dataset (GEO2R approach)
+# ==============================================================================
+# This reproduces what NCBI GEO2R does interactively:
+#   1. Download the series matrix (already done above)
+#   2. Subset to the user-defined case/control samples
+#   3. Fit a linear model (limma) 
+#   4. Extract log2 fold-change, p-values, and adjusted p-values
+#   5. Remember to save the variance reuslts form limma
+
+```{r}
+run_limma_de <- function(eset, group, dataset_id) {
+  message("  Running limma DE for ", dataset_id)
+  
+  design    <- model.matrix(~ group)
+  exprs_mat <- exprs(eset)
+  exprs_mat <- exprs_mat[complete.cases(exprs_mat), ]
+  
+  fit <- lmFit(exprs_mat, design)
+  fit <- eBayes(fit)
+  
+  tt <- topTable(fit, coef = 2, number = Inf,
+                 adjust.method = "BH", sort.by = "none",
+                 confint = TRUE)
+  
+  fdata    <- fData(eset)
+  gene_col <- intersect(
+    c("Gene Symbol", "GENE_SYMBOL", "gene_symbol", "Symbol", "SYMBOL",
+      "Gene.Symbol", "GeneSymbol", "gene_assignment", "mrna_assignment"),
+    colnames(fdata)
+  )[1]
+  
+  symbols <- if (!is.na(gene_col)) {
+    as.character(fdata[rownames(tt), gene_col, drop = TRUE])
+  } else {
+    rownames(tt)
+  }
+  
+  data.frame(
+    probe_id = rownames(tt),
+    symbol   = as.character(symbols),
+    log2FC   = tt$logFC,
+    CI.L     = tt$CI.L,
+    CI.R     = tt$CI.R,
+    pvalue   = tt$P.Value,
+    adj_pval = tt$adj.P.Val,
+    dataset  = dataset_id,
+    stringsAsFactors = FALSE
+  )
+}
+
+de_results <- list()
+
+make_group <- function(eset, cases, controls) {
+  samples <- sampleNames(eset)
+  group   <- ifelse(samples %in% cases, "case", "control")
+  factor(group, levels = c("control", "case"))  # control is reference level
+}
+
+for (gse_id in names(sample_info)) {
+  info     <- sample_info[[gse_id]]
+  eset     <- if (is.list(geo_data[[gse_id]])) geo_data[[gse_id]][[1]] else geo_data[[gse_id]]
+  all_gsm  <- c(info$cases, info$controls)
+  eset_sub <- eset[, sampleNames(eset) %in% all_gsm]
+  
+  found          <- sampleNames(eset_sub)
+  cases_found    <- sum(found %in% info$cases)
+  controls_found <- sum(found %in% info$controls)
+  message(gse_id, ": cases=", cases_found, " controls=", controls_found)
+  
+  if (cases_found < 2 || controls_found < 2) {
+    message("  WARNING: insufficient samples — skipping"); next
+  }
+  
+  group <- make_group(eset_sub, info$cases, info$controls)
+  de_results[[gse_id]] <- run_limma_de(eset_sub, group, gse_id)
+  
+  write.csv(de_results[[gse_id]],
+            file.path("results/DE", paste0(gse_id, "_DE_results.csv")),
+            row.names = FALSE)
+  message(gse_id, ": DE complete — ", nrow(de_results[[gse_id]]), " probes")
+}
+```
+
+# ==============================================================================
+# STEP 5: STANDARIZE Gene names for running
+[EDIT] explain here why in detail
+```{r}
+clean_gene_symbols <- function(df) {
+  
+  df %>%
+    mutate(
+      symbol = case_when(
+        # "NM_xxx // GENESYMBOL // description" → field 2
+        grepl(" // ",  symbol) ~ str_trim(str_split_fixed(symbol, " // ",  3)[, 2]),
+        # "GENESYMBOL /// GENESYMBOL2"          → field 1
+        grepl(" /// ", symbol) ~ str_trim(str_split_fixed(symbol, " /// ", 2)[, 1]),
+        TRUE ~ str_trim(symbol)
+      ),
+      symbol = str_to_upper(symbol)
+    ) %>%
+    filter(
+      !is.na(symbol) & symbol != "" & symbol != "---" & symbol != "NA" &
+      !grepl("^[0-9]",      symbol) &
+      !grepl("^LOC[0-9]",   symbol) &
+      !grepl("^\\(\\+\\)",  symbol) &
+      !grepl("^ASHGV",      symbol) &
+      !grepl("^ENST",       symbol) &
+      !grepl("^ENSG",       symbol) &
+      !grepl("^A_23_P",     symbol) &   # Agilent probe IDs
+      !grepl("^A_24_P",     symbol)
+    ) %>%
+    group_by(symbol) %>%
+    slice_min(pvalue, n = 1, with_ties = FALSE) %>%
+    ungroup()
+}
+
+de_results <- lapply(de_results, clean_gene_symbols)
+
+# Rebuild mv_input
+mv_input <- lapply(de_results, function(df) as.data.frame(df))
+
+# Sanity check
+cat("=== mv_input status ===\n")
+lapply(names(mv_input), function(nm) {
+  df <- mv_input[[nm]]
+  cat(nm, "| genes:", nrow(df),
+      "| cols:", paste(colnames(df), collapse = ", "),
+      "| sample:", paste(head(df$symbol, 3), collapse = ", "), "\n")
+})
+
+# Overlap check
+gene_lists <- lapply(mv_input, `[[`, "symbol")
+cat("\n=== Overlap ===\n")
+nms <- names(gene_lists)
+for (i in 1:(length(nms)-1))
+  for (j in (i+1):length(nms))
+    cat(nms[i], "vs", nms[j], ":",
+        length(intersect(gene_lists[[i]], gene_lists[[j]])), "\n")
+
+
+```
+
+
+# ==============================================================================
+# STEP 5: Per-Dataset Volcano Plots (QC check before meta-analysis)
+# Before combining datasets, visualise individual DE results to detectbatch effects, outliers, or platform-specific biases.
+
+```{r}
+plot_volcano <- function(de_df, title, fc_cut = 1, p_cut = 0.05) {
+  de_df <- de_df %>%
+    mutate(
+      sig = case_when(
+        abs(log2FC) >= fc_cut & pvalue < p_cut & log2FC  >  0 ~ "Up",
+        abs(log2FC) >= fc_cut & pvalue < p_cut & log2FC  <  0 ~ "Down",
+        TRUE ~ "NS"
+      ),
+      neg_log10_p = -log10(pvalue)
+    )
+
+  n_up   <- sum(de_df$sig == "Up",   na.rm = TRUE)
+  n_down <- sum(de_df$sig == "Down", na.rm = TRUE)
+
+  ggplot(de_df, aes(x = log2FC, y = neg_log10_p, colour = sig)) +
+    geom_point(alpha = 0.5, size = 1.2) +
+    scale_colour_manual(values = c(Up = "#E64B35", Down = "#4DBBD5", NS = "grey70")) +
+    geom_vline(xintercept = c(-fc_cut, fc_cut), linetype = "dashed", colour = "grey40") +
+    geom_hline(yintercept = -log10(p_cut),       linetype = "dashed", colour = "grey40") +
+    labs(
+      title    = title,
+      subtitle = paste0("Up: ", n_up, "  |  Down: ", n_down),
+      x        = expression(log[2]~"Fold Change"),
+      y        = expression(-log[10]~"p-value"),
+      colour   = "Direction"
+    ) +
+    theme_bw(base_size = 13) +
+    theme(plot.title = element_text(face = "bold"))
+}
+
+for (gse_id in names(de_results)) {
+  p <- plot_volcano(de_results[[gse_id]], title = paste(gse_id, "— Endometriosis vs Control"))
+  ggsave(
+    filename = file.path("results/plots", paste0(gse_id, "_volcano.pdf")),
+    plot = p, width = 7, height = 6
+  )
+  message(gse_id, ": volcano plot saved")
+}
+```
+
+
+#### STEP 6
+# Run the three strategies
+Random-Effects Model (recommended — use this as your primary result)
+Models between-study heterogeneity explicitly. Most appropriate when datasets come from different platforms/cohorts, which is almost always the case with GEO.
+```{r}
+mv_rem <- rem_mv(
+  diffexp       = mv_input,
+  pcriteria     = "pvalue",
+  foldchangecol = "log2FC",
+  genenamecol   = "symbol",
+  llcol         = "CI.L",
+  rlcol         = "CI.R",
+  collaps       = FALSE   
+)
+
+write.csv(mv_rem@metaresult,
+          "results/DE/MetaVolcanoR_REM_results.csv",
+          row.names = FALSE)
+message("rem_mv complete — ", nrow(mv_rem@metaresult), " genes")
+```
+
+The result slot mv_rem@metaresult gives you per-gene:
+MeaningrandomSummary^:pooled log2FC estimate
+randomP: meta p-value
+tau2: between-study variance (heterogeneity)
+I2: % of variance due to heterogeneity
+
+SHow the plot
+```{r}
+mv_rem@MetaVolcano
+```
+
+
+Combining MV
+```{r}
+mv_fisher <- combining_mv(
+  diffexp       = mv_input,
+  pcriteria     = "pvalue",
+  foldchangecol = "log2FC",
+  genenamecol   = "symbol",
+  collaps       = FALSE
+)
+```
+
+Vote counting
+```{r}
+# ==============================================================================
+mv_vote <- votecount_mv(
+  diffexp       = mv_input,
+  pcriteria     = "pvalue",
+  foldchangecol = "log2FC",
+  genenamecol   = "symbol",
+  collaps       = FALSE
+)
+```
+
+
+Get biological reuslts - Run fgsea
+```{r}
+library(fgsea)
+library(msigdbr)
+library(ggplot2)
+library(dplyr)
+library(forcats)
+
+```
+
+Download GO c5
+```{r}
+c5_sets <- msigdbr(species = "Homo sapiens", category = "C5")
+pathways <- split(c5_sets$gene_symbol, c5_sets$gs_name)
+cat("Total C5 gene sets:", length(pathways), "\n")
+
+```
+
+
+Build a gene list using the rem results
+```{r}
+rem_res <- mv_rem@metaresult
+
+gene_ranks <- setNames(rem_res$randomSummary, rem_res$symbol)
+
+```
+
+Run fgsea
+```{r}
+set.seed(42)
+fgsea_res <- fgsea(
+  pathways  = pathways,
+  stats     = gene_ranks,
+  minSize   = 15,
+  maxSize   = 500,
+  nPermSimple = 10000
+)
+
+fgsea_res <- fgsea_res %>%
+  arrange(pval) %>%
+  filter(!is.na(padj))
+
+cat("Significant pathways (padj < 0.05):", sum(fgsea_res$padj < 0.05, na.rm = TRUE), "\n")
+
+```
+
+Visualize the results
+```{r}
+top_n <- 30
+
+plot_df <- fgsea_res %>%
+  filter(padj < 0.01) %>%
+  slice_min(padj, n = top_n) %>%
+  mutate(
+    direction = ifelse(NES > 0, "Up in endo", "Down in endo"),
+    pathway_clean = gsub("^GOBP_|^GOCC_|^GOMF_", "", pathway),
+    pathway_clean = gsub("_", " ", pathway_clean),
+    pathway_clean = tolower(pathway_clean),
+    pathway_clean = fct_reorder(pathway_clean, NES)
+  )
+
+lollipop <- ggplot(plot_df, aes(x = NES, y = pathway_clean, colour = direction)) +
+  geom_segment(aes(x = 0, xend = NES, y = pathway_clean, yend = pathway_clean),
+               linewidth = 0.7, alpha = 0.6) +
+  geom_point(aes(size = -log10(padj)), alpha = 0.9) +
+  scale_colour_manual(values = c("Up in endo" = "#C0392B", "Down in endo" = "#2980B9")) +
+  geom_vline(xintercept = 0, linetype = "dashed", colour = "grey40") +
+  theme_minimal(base_size = 12) 
+
+lollipop
+```
+
+
+
+
+

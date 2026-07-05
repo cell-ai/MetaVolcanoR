@@ -4,7 +4,7 @@
 \alias{draw_degbar}
 \title{A function for DEG barplot visualization}
 \usage{
-draw_degbar(degbar_data)
+draw_degbar(degbar_data, colors = c("#811820", "grey90", "#083e46"))
 }
 \arguments{
 \item{degbar_data}{output of the \code{set_degbar_data()} function 

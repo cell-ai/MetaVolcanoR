@@ -47,7 +47,6 @@ Encoding: UTF-8
 biocViews: GeneExpression, DifferentialExpression, Transcriptomics, mRNAMicroarray, RNASeq
 LazyData: false
 VignetteBuilder: knitr
-RoxygenNote: 7.3.3
 URL: https://github.com/iza-mcac/MetaVolcanoR
 BugReports: https://github.com/iza-mcac/MetaVolcanoR/issues
-
+Config/roxygen2/version: 8.0.0
