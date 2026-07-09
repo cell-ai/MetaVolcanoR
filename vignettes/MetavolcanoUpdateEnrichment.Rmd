@@ -39,7 +39,7 @@ in this update of MetaVolcanoR:
   with MSigDB integration and three ranking strategies
 - **Protein-level meta-analysis**: MetaVolcanoR is feature-agnostic and 
   applies directly to differential protein abundance data (mass 
-  spectrometry, Olink, SomaScan), demonstrated here on a vaccine 
+  spectrometry, Olink, SomaScan), demonstrated [here](cptac-proteomics.html) on a vaccine 
   proteomics meta-analysis
 
 ## Setup
