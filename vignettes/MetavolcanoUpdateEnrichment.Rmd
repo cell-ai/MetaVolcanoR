@@ -20,8 +20,6 @@ knitr::opts_chunk$set(
 )
 ```
 
-> 📄 **See also:** [Proteomics meta-analysis — CPTAC pan-cancer example](cptac-proteomics.html)
-
 ## Overview
 
 This vignette demonstrates the new features and improvements introduced
